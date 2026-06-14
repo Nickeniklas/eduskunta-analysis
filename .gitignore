@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+
+# generated data / outputs
+votes.db
+*.db
+mp_map.png
+clusters.csv
+rebels.csv
+surprises.csv
