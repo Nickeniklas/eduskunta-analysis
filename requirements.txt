@@ -1,0 +1,7 @@
+pandas
+numpy
+scikit-learn
+matplotlib
+
+# Optional: nicer 2D projection for the similarity map (falls back to PCA if absent)
+umap-learn
