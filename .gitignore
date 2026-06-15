@@ -4,6 +4,7 @@ __pycache__/
 
 # generated data / outputs
 votes.db
+votes.db-journal
 *.db
 mp_map.png
 clusters.csv
