@@ -43,7 +43,11 @@ python fetch_votes.py --list
 python fetch_votes.py --peek SaliDBAanestysEdustaja
 
 # 2. pull the voting data into a local SQLite cache (votes.db)
+#    sync is resumable — safe to interrupt and re-run
 python fetch_votes.py --sync
+
+# to wipe and start over from scratch
+python fetch_votes.py --sync --reset
 
 # 3. run the analysis
 python analyse_votes.py

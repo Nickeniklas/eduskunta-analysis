@@ -46,9 +46,12 @@ python fetch_votes.py --list
 python fetch_votes.py --peek SaliDBAanestysEdustaja
 python fetch_votes.py --peek SaliDBAanestys
 
-# Full sync into votes.db (paginates the API at 100 rows/page, ~0.3s between pages)
+# Sync into votes.db — RESUMABLE (paginates at 100 rows/page, ~0.3s between pages)
 python fetch_votes.py --sync
 python fetch_votes.py --sync --db custom.db
+
+# Wipe cached vote tables and do a full re-pull from scratch
+python fetch_votes.py --sync --reset
 
 # Run the analysis (requires votes.db from --sync)
 python analyse_votes.py
@@ -77,10 +80,12 @@ There is no test suite, linter, or build step in this repo.
   every guessable field has a corresponding `--col-*` CLI override. If the
   Eduskunta API renames a column, update the candidate lists or pass the
   override flag rather than rewriting the loader.
-- **Sync is a full refresh**: `--sync` does `DELETE FROM <table>` then
-  reinserts everything each run — there's no incremental/delta sync. `--since`
-  is currently accepted but not implemented as a real filter (noted as a
-  placeholder in both scripts).
+- **Sync is resumable**: `--sync` resumes from where it left off — it counts
+  cached rows, computes the start page, and uses `INSERT OR IGNORE` against a
+  unique index so re-fetching an incomplete page is harmless. Progress is
+  checkpointed to a `_sync_state` table after every 1 000-row buffer flush.
+  Pass `--reset` to wipe and start clean. `--since` is accepted by both scripts
+  but not yet implemented as a real filter (placeholder).
 - **Ballot normalisation**: raw Finnish vote choices (`Jaa`/`Ei`/`Tyhjää`/`Poissa`)
   are normalised via `CHOICE_MAP` to `yes`/`no`/`empty`/`absent`. Anything
   unrecognised defaults to `absent`. Only `yes`/`no` are used for similarity
