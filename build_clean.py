@@ -8,7 +8,7 @@ CREATE TABLE ballots_clean AS
 SELECT
   e.EdustajaHenkiloNumero AS person_id,
   e.EdustajaEtunimi || ' ' || e.EdustajaSukunimi AS name,
-  LOWER(e.EdustajaRyhmaLyhenne) AS party,
+  LOWER(TRIM(e.EdustajaRyhmaLyhenne)) AS party,
   a.AanestysId AS vote_id,
   a.IstuntoPvm AS vote_date,
   CASE TRIM(e.EdustajaAanestys)

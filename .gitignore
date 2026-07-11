@@ -11,3 +11,6 @@ mp_map.png
 clusters.csv
 rebels.csv
 surprises.csv
+mp_map_*.png
+agreement_*.csv
+lookup_*.csv

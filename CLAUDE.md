@@ -14,12 +14,21 @@ data from the open data API and analyses voting behaviour:
 2. `build_clean.py` — rebuilds `ballots_clean` in `votes.db`, a normalised
    one-row-per-(person, vote) table with numeric ballots and lowercased
    party codes (see "Cleaned ballot table" below).
-3. `analyse_votes.py` — reads `votes.db` and produces:
-   - `mp_map.png` + `clusters.csv`: an MP-by-MP voting-similarity map (cosine
-     similarity → PCA or UMAP projection → KMeans clusters), coloured by party.
-   - `rebels.csv`: MPs ranked by how often they voted against their own
-     party's majority ("party line") on a given vote.
-   - `surprises.csv`: votes ranked by how close the yes/no split was.
+3. `term_matrix.py` — the main analysis entry point. Reads `ballots_clean`
+   (not the raw tables) for a single parliamentary term and produces:
+   - `agreement_{term}.csv`: MP x MP pairwise voting-agreement matrix.
+   - `lookup_{term}.csv`: `person_id` → `name`, `party` for that term.
+   - `mp_map_{term}.png`: a 2D projection (UMAP if installed, else PCA) of
+     the agreement matrix, KMeans-clustered, coloured by party.
+   - printed summary stats: MPs kept/dropped, within- vs cross-party mean
+     agreement per party.
+
+   `analyse_votes.py` is the older, superseded entry point — it reads the
+   raw API tables directly instead of `ballots_clean`, covers the whole
+   dataset instead of one term at a time, and additionally produces
+   `rebels.csv` / `surprises.csv` (party-line-breaking and closest-vote
+   reports that `term_matrix.py` does not yet have equivalents for). Kept
+   for that reason; prefer `term_matrix.py` for anything term-scoped.
 
 Data is CC BY 4.0 (credit: Eduskunta / Parliament of Finland).
 
@@ -60,7 +69,12 @@ python fetch_votes.py --sync --reset
 python build_clean.py
 python build_clean.py --db custom.db
 
-# Run the analysis (requires votes.db from --sync)
+# Run the term-scoped analysis (requires ballots_clean from build_clean.py)
+python term_matrix.py --term 2019-23
+python term_matrix.py --term 2019-23 --db custom.db --min-ballots 100 --min-shared 50
+
+# Older, whole-dataset analysis (raw tables, superseded by term_matrix.py
+# except for rebels.csv / surprises.csv, which have no term_matrix.py equivalent yet)
 python analyse_votes.py
 python analyse_votes.py --db custom.db --min-votes 20
 
@@ -104,10 +118,25 @@ There is no test suite, linter, or build step in this repo.
 - **API politeness**: `fetch_votes.py` enforces `PER_PAGE = 100` (API hard
   cap) and sleeps `SLEEP = 0.3s` between pages, with exponential backoff on
   HTTP 429. Don't remove these when editing the fetch loop.
-- **Pipeline order**: `fetch_votes.py` → `build_clean.py` → analysis.
-  `build_clean.py` must be re-run after every `fetch_votes.py --sync` that
-  pulls new rows, since it rebuilds `ballots_clean` from scratch (`DROP TABLE
-  IF EXISTS` + full `CREATE TABLE ... AS SELECT`).
+- **Pipeline order**: `fetch_votes.py` → `build_clean.py` → `term_matrix.py`
+  (or `analyse_votes.py`). `build_clean.py` must be re-run after every
+  `fetch_votes.py --sync` that pulls new rows, since it rebuilds
+  `ballots_clean` from scratch (`DROP TABLE IF EXISTS` + full `CREATE TABLE
+  ... AS SELECT`); `term_matrix.py` reads only `ballots_clean` + `terms`, not
+  the raw tables, so it also needs `build_clean.py` to have been run at least
+  once.
+- **`term_matrix.py`'s vectorized agreement**: `pairwise_agreement()` builds
+  one MP x vote pivot (`NaN` = absent) and computes, for each ballot value
+  `v` in `{1, -1, 0}`, an indicator matrix `(X == v)` (NaN-safe since
+  `NaN == v` is `False`); `equal_votes` is the sum over `v` of
+  `indicator @ indicator.T`, `shared_votes` is `voted @ voted.T`, and
+  `agreement = equal_votes / shared_votes` with pairs below `--min-shared`
+  set to `NaN`. No Python-level loop over MP pairs.
+  - **Layering rule**: raw API tables are never cleaned in analysis code.
+  All normalization (trimming, casing, value mapping) happens in
+  build_clean.py, once. Analysis scripts read ballots_clean and must
+  assume its values are already clean — if a value turns out dirty,
+  fix build_clean.py and rebuild, never work around it downstream.
 
 ## Cleaned ballot table (`ballots_clean`)
 
@@ -140,6 +169,13 @@ Facts verified against the live data (714 MPs, ~4.31M ballot rows as of
   or `NULL` (Poissa/absent); only Finnish-language, non-annulled
   (`AanestysMitatoity = '0'`) votes are included. Indexed on `person_id` and
   `vote_id`.
+- **`ballots_clean.party` is trimmed at the source**: `build_clean.py`'s
+  `BUILD_SQL` wraps `EdustajaRyhmaLyhenne` in `LOWER(TRIM(...))`, so
+  `party` values are already clean (e.g. `'kok'`, not `'kok       '`).
+  Previously `party` was only lowercased, not trimmed, and analysis code
+  had to strip it locally; that workaround has been removed now that the
+  fix lives in `build_clean.py` (see the layering rule under Architecture
+  notes).
 - **`terms` table**: `build_clean.py` also (re)builds a small `terms`
   reference table (`term`, `start_date`, `end_date`) hardcoded as the `TERMS`
   list in that script — one row per Finnish parliamentary term, covering
