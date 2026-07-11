@@ -9,9 +9,9 @@ the cleaned table instead of the raw API tables.
 
 Outputs (in the current directory):
   agreement_{term}.csv   MP x MP agreement matrix (person_id index/columns)
-  lookup_{term}.csv      person_id -> name, party (most frequent party in term)
+  lookup_{term}.csv      person_id -> name, party, cluster (KMeans label)
   mp_map_{term}.png      2D projection (UMAP if installed, else PCA),
-                         coloured by party, KMeans cluster markers
+                         coloured by party
 
 Deps: pandas, numpy, scikit-learn, matplotlib  (umap-learn optional)
 """
@@ -98,22 +98,16 @@ def project(X):
         return PCA(n_components=2, random_state=0).fit_transform(X), "PCA"
 
 
-def plot_map(coords, parties, clusters, method, path):
+def plot_map(coords, parties, method, path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    df = pd.DataFrame({"x": coords[:, 0], "y": coords[:, 1],
-                        "party": parties, "cluster": clusters})
+    df = pd.DataFrame({"x": coords[:, 0], "y": coords[:, 1], "party": parties})
     fig, ax = plt.subplots(figsize=(11, 8))
-    markers = ["o", "s", "^", "D", "v", "P", "X", "*"]
     for party, g in df.groupby("party"):
         ax.scatter(g["x"], g["y"], label=party, s=45, alpha=0.85)
-    for cluster, g in df.groupby("cluster"):
-        marker = markers[cluster % len(markers)]
-        ax.scatter(g["x"], g["y"], s=140, facecolors="none",
-                   edgecolors="black", linewidths=0.6, marker=marker)
-    ax.set_title(f"MP voting-agreement map ({method})\ncolour = party, marker = cluster")
+    ax.set_title(f"MP voting-agreement map ({method})\ncolour = party")
     ax.legend(loc="best", fontsize=8, ncol=2)
     ax.set_xticks([]); ax.set_yticks([])
     fig.tight_layout()
@@ -162,11 +156,6 @@ def main():
     agreement.to_csv(agreement_path)
     print(f"wrote {agreement_path}")
 
-    lookup = build_lookup(df, mat.index)
-    lookup_path = f"lookup_{args.term}.csv"
-    lookup.to_csv(lookup_path, index=False)
-    print(f"wrote {lookup_path}")
-
     # distance for projection: 1 - agreement, missing pairs treated as fully dissimilar
     dist = (1 - agreement).fillna(1.0).values.copy()
     np.fill_diagonal(dist, 0.0)
@@ -177,13 +166,28 @@ def main():
     k = min(6, max(2, len(mat) // 25))
     cluster_labels = KMeans(n_clusters=k, n_init=10, random_state=0).fit_predict(coords)
 
+    # lookup is written AFTER clustering so the cluster label can be included:
+    # person_id, name, party, cluster — makes "who is in cluster N" a CSV filter
+    lookup = build_lookup(df, mat.index)
+    lookup["cluster"] = pd.Series(cluster_labels, index=mat.index)\
+        .reindex(lookup["person_id"]).values
+    lookup_path = f"lookup_{args.term}.csv"
+    lookup.to_csv(lookup_path, index=False)
+    print(f"wrote {lookup_path}")
+
     party_of = lookup.set_index("person_id")["party"]
     parties = party_of.reindex(mat.index).values
 
     map_path = f"mp_map_{args.term}.png"
-    plot_map(coords, parties, cluster_labels, method, map_path)
+    plot_map(coords, parties, method, map_path)
 
     print_stats(agreement, lookup)
+
+    print("\ncluster composition (party counts per cluster):")
+    comp = lookup.groupby(["cluster", "party"]).size().rename("n").reset_index()
+    for cluster, g in comp.groupby("cluster"):
+        parts = ", ".join(f"{r.party}={r.n}" for r in g.itertuples())
+        print(f"  cluster {cluster}: {parts}")
 
 
 if __name__ == "__main__":
