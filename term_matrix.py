@@ -14,6 +14,15 @@ Outputs (in the current directory):
                          coloured by party
 
 Deps: pandas, numpy, scikit-learn, matplotlib  (umap-learn optional)
+
+Usage:
+  python term_matrix.py --term 2019-23
+  python term_matrix.py --term 2019-23 --db custom.db
+  python term_matrix.py --term 2019-23 --min-ballots 100 --min-shared 50
+
+Available terms come from the `terms` table (built by build_clean.py):
+1995-99 through 2023-27. Requires ballots_clean, so run build_clean.py
+first. Feed the outputs to pairs_report.py for readable pair reports.
 """
 
 import argparse

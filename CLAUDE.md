@@ -17,18 +17,26 @@ data from the open data API and analyses voting behaviour:
 3. `term_matrix.py` — the main analysis entry point. Reads `ballots_clean`
    (not the raw tables) for a single parliamentary term and produces:
    - `agreement_{term}.csv`: MP x MP pairwise voting-agreement matrix.
-   - `lookup_{term}.csv`: `person_id` → `name`, `party` for that term.
+   - `lookup_{term}.csv`: `person_id` → `name`, `party`, `cluster` (KMeans
+     label) for that term.
    - `mp_map_{term}.png`: a 2D projection (UMAP if installed, else PCA) of
-     the agreement matrix, KMeans-clustered, coloured by party.
+     the agreement matrix, coloured by party.
    - printed summary stats: MPs kept/dropped, within- vs cross-party mean
-     agreement per party.
+     agreement per party, and each cluster's party composition.
+4. `pairs_report.py` — readable reports from `term_matrix.py`'s CSV outputs
+   (no DB access). Default run writes `cross_party_{term}.csv` (highest
+   agreement across party lines) and `dissenters_{term}.csv` (lowest
+   agreement within a party). `--mp` prints one MP's closest/furthest
+   voting allies (accepts a person_id or a partial, case-insensitive name);
+   `--cluster N` lists a KMeans cluster's members by name.
 
    `analyse_votes.py` is the older, superseded entry point — it reads the
    raw API tables directly instead of `ballots_clean`, covers the whole
    dataset instead of one term at a time, and additionally produces
    `rebels.csv` / `surprises.csv` (party-line-breaking and closest-vote
-   reports that `term_matrix.py` does not yet have equivalents for). Kept
-   for that reason; prefer `term_matrix.py` for anything term-scoped.
+   reports that the term-scoped pipeline does not yet have equivalents
+   for). Kept for that reason; prefer `term_matrix.py` for anything
+   term-scoped.
 
 Data is CC BY 4.0 (credit: Eduskunta / Parliament of Finland).
 
@@ -72,6 +80,12 @@ python build_clean.py --db custom.db
 # Run the term-scoped analysis (requires ballots_clean from build_clean.py)
 python term_matrix.py --term 2019-23
 python term_matrix.py --term 2019-23 --db custom.db --min-ballots 100 --min-shared 50
+
+# Readable reports from the term outputs (requires term_matrix.py run first)
+python pairs_report.py --term 2019-23                  # cross-party + dissenter CSVs
+python pairs_report.py --term 2019-23 --top 30         # print more rows
+python pairs_report.py --term 2019-23 --mp "Valtonen"  # one MP's allies (name or person_id)
+python pairs_report.py --term 2019-23 --cluster 2      # members of KMeans cluster 2
 
 # Older, whole-dataset analysis (raw tables, superseded by term_matrix.py
 # except for rebels.csv / surprises.csv, which have no term_matrix.py equivalent yet)
@@ -119,12 +133,15 @@ There is no test suite, linter, or build step in this repo.
   cap) and sleeps `SLEEP = 0.3s` between pages, with exponential backoff on
   HTTP 429. Don't remove these when editing the fetch loop.
 - **Pipeline order**: `fetch_votes.py` → `build_clean.py` → `term_matrix.py`
-  (or `analyse_votes.py`). `build_clean.py` must be re-run after every
-  `fetch_votes.py --sync` that pulls new rows, since it rebuilds
-  `ballots_clean` from scratch (`DROP TABLE IF EXISTS` + full `CREATE TABLE
-  ... AS SELECT`); `term_matrix.py` reads only `ballots_clean` + `terms`, not
-  the raw tables, so it also needs `build_clean.py` to have been run at least
-  once.
+  → `pairs_report.py` (or `analyse_votes.py` instead of the last two).
+  `build_clean.py` must be re-run after every `fetch_votes.py --sync` that
+  pulls new rows, since it rebuilds `ballots_clean` from scratch
+  (`DROP TABLE IF EXISTS` + full `CREATE TABLE ... AS SELECT`);
+  `term_matrix.py` reads only `ballots_clean` + `terms`, not the raw tables,
+  so it also needs `build_clean.py` to have been run at least once.
+  `pairs_report.py` reads only `agreement_{term}.csv` + `lookup_{term}.csv`
+  from the current directory (no DB), so `term_matrix.py` must have been run
+  for that term first.
 - **`term_matrix.py`'s vectorized agreement**: `pairwise_agreement()` builds
   one MP x vote pivot (`NaN` = absent) and computes, for each ballot value
   `v` in `{1, -1, 0}`, an indicator matrix `(X == v)` (NaN-safe since
@@ -132,7 +149,18 @@ There is no test suite, linter, or build step in this repo.
   `indicator @ indicator.T`, `shared_votes` is `voted @ voted.T`, and
   `agreement = equal_votes / shared_votes` with pairs below `--min-shared`
   set to `NaN`. No Python-level loop over MP pairs.
-  - **Layering rule**: raw API tables are never cleaned in analysis code.
+- **Cluster labels are per-run**: `term_matrix.py` KMeans-clusters the 2D
+  projection and writes the label into `lookup_{term}.csv`'s `cluster`
+  column. The numbers are arbitrary and can shuffle between runs (KMeans is
+  seeded, but any change to the data or projection renumbers them) — never
+  hardcode "cluster 2 = greens"; identify clusters by the party-composition
+  printout of the run that produced the CSV.
+- **pandas `stack()` gotcha**: newer pandas keeps NaN rows in `stack()` by
+  default (the old dropna behaviour changed). `pairs_report.py` relies on an
+  explicit `.dropna()` after masking the matrix's lower triangle — removing
+  it silently reintroduces every masked cell as a NaN row and inflates the
+  pair count. Keep the explicit `.dropna()` in any similar melt.
+- **Layering rule**: raw API tables are never cleaned in analysis code.
   All normalization (trimming, casing, value mapping) happens in
   build_clean.py, once. Analysis scripts read ballots_clean and must
   assume its values are already clean — if a value turns out dirty,

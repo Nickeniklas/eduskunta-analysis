@@ -47,31 +47,49 @@ free.
   architecture: **batch-pull once into local SQLite, then analyse the local copy.**
   Never hit the live API per page-view.
 
-### KNOWN PAIN POINT (must fix)
-The current fetcher does `DELETE FROM table` then refills from page 0 on every sync.
-That means **a sync is not resumable** — if it stops partway, the partial data can't be
-continued and you start over. After losing a ~2h run this way, the next priority is to
-**make the sync resumable / checkpointed** so a stop never costs the whole run.
+### KNOWN PAIN POINT (RESOLVED)
+The original fetcher did `DELETE FROM table` then refilled from page 0 on every sync,
+so a sync wasn't resumable — a stop partway meant starting over. After losing a ~2h run
+this way, this was fixed: `--sync` now counts cached rows, resumes from the right page,
+and uses `INSERT OR IGNORE` + a `_sync_state` checkpoint table so an interrupted sync
+picks up where it left off. `--reset` still does the old wipe-and-restart if you want
+it. See the "Sync is resumable" note in [CLAUDE.md](CLAUDE.md).
 
 Note: this project needs **full historic data** (analysis spans the whole record), so
 do NOT default to recency filters or partial pulls. Full history is the requirement.
+(In practice the live API's voting data starts in 1996, not 1976 as originally assumed
+here — `votes.db` currently holds the full 1996–2026 record, matching the `terms` table
+in `build_clean.py`.)
 
 ## Current state
 
-- `fetch_votes.py` — pulls the two tables into `votes.db` (SQLite), with pagination and
-  basic retry/backoff. Has a `--peek` to confirm real column names, `--list`, `--sync`.
-  Schema-tolerant (column names are guessed from candidates).
-- `analyse_votes.py` — reads `votes.db`, builds the agreement matrix (yes=+1, no=−1,
-  abstain/absent=0 so they don't fake agreement), projects to 2D (UMAP if installed,
-  else PCA), clusters (KMeans), colours by party. Outputs `mp_map.png`, `clusters.csv`,
-  `rebels.csv`, `surprises.csv`. Also schema-tolerant with `--col-*` overrides.
+The full pipeline described in [README.md](README.md) is built and working, run
+end-to-end at least once for term `2019-23`:
 
-### Immediate to-do
-1. Make `fetch_votes.py` resumable (checkpoint progress; no full wipe on restart). TOP
-   priority.
-2. Confirm the real column names via `--peek` before trusting the analysis defaults
-   (current Finnish column-name guesses: `AanestysId`, `RyhmaLyhenne`,
-   `EdustajanAanestys`, etc. — unverified against the live API).
+- `fetch_votes.py` — resumable sync of the two raw tables into `votes.db`. Has
+  `--peek`, `--list`, `--sync` (`--reset` for a full wipe). Schema-tolerant (column
+  names guessed from candidates).
+- `build_clean.py` — rebuilds `ballots_clean` (one row per person/vote, Finnish-only,
+  trimmed/lowercased/numeric) and the `terms` reference table. All value normalisation
+  lives here now (see the "Layering rule" in CLAUDE.md) — analysis scripts assume
+  `ballots_clean` is already clean and never clean values themselves.
+- `term_matrix.py` — the current main analysis entry point. Per term: MP x MP
+  agreement matrix (vectorised, no Python loop over pairs), a lookup CSV
+  (name/party/KMeans cluster), and the similarity-map PNG.
+- `pairs_report.py` — turns a term's agreement matrix into readable reports:
+  top cross-party pairs, within-party dissenters, per-MP ally lookup, cluster
+  membership.
+- `analyse_votes.py` — the original whole-dataset entry point (reads the raw tables
+  directly, not `ballots_clean`). Superseded by the `term_matrix.py` /
+  `pairs_report.py` pair for everything except `rebels.csv` / `surprises.csv`
+  (party-line-breaking and closest-vote reports), which have no term-scoped
+  equivalent yet — kept around for those two reports.
+
+### Open items (not blocking, nothing urgent)
+1. Port `rebels.csv` / `surprises.csv` (party-line rebels, closest votes) to the
+   term-scoped pipeline, if still wanted — the last reason `analyse_votes.py` is kept.
+2. `build_clean.py`'s `TERMS` list needs a ninth row once the 2027 election result is
+   known.
 
 ## Interpretation caveat
 
