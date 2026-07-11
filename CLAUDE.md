@@ -140,3 +140,11 @@ Facts verified against the live data (714 MPs, ~4.31M ballot rows as of
   or `NULL` (Poissa/absent); only Finnish-language, non-annulled
   (`AanestysMitatoity = '0'`) votes are included. Indexed on `person_id` and
   `vote_id`.
+- **`terms` table**: `build_clean.py` also (re)builds a small `terms`
+  reference table (`term`, `start_date`, `end_date`) hardcoded as the `TERMS`
+  list in that script — one row per Finnish parliamentary term, covering
+  1995-99 through 2023-27. A ninth row will be needed once the 2027 election
+  result is known; update `TERMS` in `build_clean.py` when it is. Join on
+  `date(vote_date) BETWEEN start_date AND end_date` (use `date()` to strip
+  the `00:00:00` time suffix, otherwise votes on a term's exact end date
+  compare as outside the range).
