@@ -39,8 +39,10 @@ free.
 
 ## Scale and the big gotcha
 
-- Voting data goes back to **1976**. The ballot table (`SaliDBAanestysEdustaja`) is
-  roughly **3–5 million rows** (≈200 MP rows per vote × tens of thousands of votes).
+- Voting data in the live API goes back to **1996**. The ballot table
+  (`SaliDBAanestysEdustaja`) holds **~4.3 million rows** (≈200 MP rows per vote ×
+  tens of thousands of votes); the cleaned `ballots_clean` currently sits at
+  4,324,812 rows across 714 MPs (as of 2026-07-19).
 - A full historic sync is a **multi-hour job** (tens of thousands of pages, with a
   polite sleep between requests). This is a one-time cost since data is cached locally;
   afterwards `--sync --update` tops the cache up with newly published votes in minutes
@@ -59,9 +61,8 @@ it. See the "Sync is resumable" note in [CLAUDE.md](CLAUDE.md).
 
 Note: this project needs **full historic data** (analysis spans the whole record), so
 do NOT default to recency filters or partial pulls. Full history is the requirement.
-(In practice the live API's voting data starts in 1996, not 1976 as originally assumed
-here — `votes.db` currently holds the full 1996–2026 record, matching the `terms` table
-in `build_clean.py`.)
+`votes.db` currently holds the full 1996–2026 record, matching the `terms` table in
+`build_clean.py`.
 
 ### Keeping the data current
 
@@ -85,22 +86,27 @@ end-to-end at least once for term `2019-23`. As of 2026-07-19 the cache holds
 
 - `fetch_votes.py` — resumable sync of the two raw tables into `votes.db`. Has
   `--peek`, `--list`, `--sync` (`--update` for an incremental refresh, `--reset` for a
-  full wipe). Schema-tolerant (column names guessed from candidates).
+  full wipe). Schema-tolerant in that it stores every API column as TEXT verbatim, so
+  the cache schema always matches whatever the API returns (it does not guess or
+  rename columns — that lives in `analyse_votes.py`, see below).
 - `build_clean.py` — rebuilds `ballots_clean` (one row per person/vote, Finnish-only,
   trimmed/lowercased/numeric) and the `terms` reference table. All value normalisation
   lives here now (see the "Layering rule" in CLAUDE.md) — analysis scripts assume
   `ballots_clean` is already clean and never clean values themselves.
 - `term_matrix.py` — the current main analysis entry point. Per term: MP x MP
   agreement matrix (vectorised, no Python loop over pairs), a lookup CSV
-  (name/party/KMeans cluster), and the similarity-map PNG.
+  (name/party/KMeans cluster), and the similarity-map PNG. Reads `ballots_clean`
+  with the real column names, not the raw tables.
 - `pairs_report.py` — turns a term's agreement matrix into readable reports:
   top cross-party pairs, within-party dissenters, per-MP ally lookup, cluster
   membership.
 - `analyse_votes.py` — the original whole-dataset entry point (reads the raw tables
-  directly, not `ballots_clean`). Superseded by the `term_matrix.py` /
-  `pairs_report.py` pair for everything except `rebels.csv` / `surprises.csv`
-  (party-line-breaking and closest-vote reports), which have no term-scoped
-  equivalent yet — kept around for those two reports.
+  directly, not `ballots_clean`). This is the one script that is *column-name
+  schema-tolerant*: it guesses Finnish column names from candidate lists
+  (`BALLOT_DEFAULTS` / `VOTE_DEFAULTS`) with `--col-*` overrides. Superseded by the
+  `term_matrix.py` / `pairs_report.py` pair for everything except `rebels.csv` /
+  `surprises.csv` (party-line-breaking and closest-vote reports), which have no
+  term-scoped equivalent yet — kept around for those two reports.
 - `paths.py` — single source of truth for where term-scoped outputs land.
   `term_matrix.py` and `pairs_report.py` both write/read through its
   `output_path(term, filename)` helper, which resolves to
