@@ -3,8 +3,8 @@
 pairs_report.py
 
 Turns the agreement matrix from term_matrix.py into human-readable reports.
-Reads agreement_{term}.csv + lookup_{term}.csv (must exist in the current
-directory — run term_matrix.py for that term first).
+Reads agreement_{term}.csv + lookup_{term}.csv from outputs/{term}/ (must
+exist — run term_matrix.py for that term first).
 
 Default run produces three reports:
   1. Highest CROSS-party pairs   -> cross_party_{term}.csv
@@ -32,11 +32,13 @@ import sys
 import numpy as np
 import pandas as pd
 
+from paths import output_path
+
 
 def load(term):
     try:
-        agreement = pd.read_csv(f"agreement_{term}.csv", index_col=0)
-        lookup = pd.read_csv(f"lookup_{term}.csv")
+        agreement = pd.read_csv(output_path(term, f"agreement_{term}.csv"), index_col=0)
+        lookup = pd.read_csv(output_path(term, f"lookup_{term}.csv"))
     except FileNotFoundError as e:
         raise SystemExit(
             f"{e.filename} not found — run `python term_matrix.py --term {term}` first"
@@ -69,7 +71,7 @@ def long_pairs(agreement, lookup):
 def report_cross_party(pairs, term, top):
     cross = pairs[pairs["party1"] != pairs["party2"]]
     cross = cross.sort_values("agreement", ascending=False)
-    path = f"cross_party_{term}.csv"
+    path = output_path(term, f"cross_party_{term}.csv")
     cross.to_csv(path, index=False)
     print(f"wrote {path} ({len(cross):,} pairs)")
     print(f"\ntop {top} cross-party pairs (vote most alike despite different parties):")
@@ -80,7 +82,7 @@ def report_cross_party(pairs, term, top):
 def report_dissenters(pairs, term, top):
     within = pairs[pairs["party1"] == pairs["party2"]]
     within = within.sort_values("agreement", ascending=True)
-    path = f"dissenters_{term}.csv"
+    path = output_path(term, f"dissenters_{term}.csv")
     within.to_csv(path, index=False)
     print(f"\nwrote {path} ({len(within):,} pairs)")
     print(f"\nbottom {top} within-party pairs (party colleagues who agree least):")

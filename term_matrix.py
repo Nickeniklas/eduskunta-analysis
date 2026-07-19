@@ -7,7 +7,7 @@ term and produces an MP x MP pairwise agreement matrix, plus a similarity
 map. Replaces analyse_votes.py as the main analysis entry point: it reads
 the cleaned table instead of the raw API tables.
 
-Outputs (in the current directory):
+Outputs (in outputs/{term}/, see paths.py):
   agreement_{term}.csv   MP x MP agreement matrix (person_id index/columns)
   lookup_{term}.csv      person_id -> name, party, cluster (KMeans label)
   mp_map_{term}.png      2D projection (UMAP if installed, else PCA),
@@ -30,6 +30,8 @@ import sqlite3
 
 import numpy as np
 import pandas as pd
+
+from paths import output_path
 
 
 def load_term(db, term):
@@ -161,7 +163,7 @@ def main():
     print(f"pivoted matrix: {mat.shape[0]} MPs x {mat.shape[1]} votes")
 
     agreement = pairwise_agreement(mat, args.min_shared)
-    agreement_path = f"agreement_{args.term}.csv"
+    agreement_path = output_path(args.term, f"agreement_{args.term}.csv")
     agreement.to_csv(agreement_path)
     print(f"wrote {agreement_path}")
 
@@ -180,14 +182,14 @@ def main():
     lookup = build_lookup(df, mat.index)
     lookup["cluster"] = pd.Series(cluster_labels, index=mat.index)\
         .reindex(lookup["person_id"]).values
-    lookup_path = f"lookup_{args.term}.csv"
+    lookup_path = output_path(args.term, f"lookup_{args.term}.csv")
     lookup.to_csv(lookup_path, index=False)
     print(f"wrote {lookup_path}")
 
     party_of = lookup.set_index("person_id")["party"]
     parties = party_of.reindex(mat.index).values
 
-    map_path = f"mp_map_{args.term}.png"
+    map_path = output_path(args.term, f"mp_map_{args.term}.png")
     plot_map(coords, parties, method, map_path)
 
     print_stats(agreement, lookup)

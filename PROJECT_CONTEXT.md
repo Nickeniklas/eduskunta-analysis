@@ -101,6 +101,16 @@ end-to-end at least once for term `2019-23`. As of 2026-07-19 the cache holds
   `pairs_report.py` pair for everything except `rebels.csv` / `surprises.csv`
   (party-line-breaking and closest-vote reports), which have no term-scoped
   equivalent yet — kept around for those two reports.
+- `paths.py` — single source of truth for where term-scoped outputs land.
+  `term_matrix.py` and `pairs_report.py` both write/read through its
+  `output_path(term, filename)` helper, which resolves to
+  `outputs/{term}/{filename}` (e.g. `outputs/2019-23/agreement_2019-23.csv`),
+  creating the folder on demand. Filenames still carry the term so they stay
+  self-identifying if copied out of that folder. `analyse_votes.py` is the
+  one exception — not term-scoped, doesn't import `paths.py`, still writes
+  `mp_map.png` / `clusters.csv` / `rebels.csv` / `surprises.csv` to the repo
+  root. `.gitignore` ignores `outputs/*` (with `!outputs/.gitkeep` so the
+  folder survives a fresh clone) instead of the old per-file globs.
 
 ### Open items (not blocking, nothing urgent)
 1. Port `rebels.csv` / `surprises.csv` (party-line rebels, closest votes) to the

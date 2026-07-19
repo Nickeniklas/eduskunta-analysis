@@ -87,13 +87,16 @@ python pairs_report.py --term 2019-23 --cluster 2      # who is in KMeans cluste
 
 ### Outputs
 
+All term-scoped outputs are written under `outputs/{term}/` (see `paths.py`
+for the convention).
+
 | File | What it is |
 |---|---|
-| `agreement_{term}.csv` | MP x MP agreement matrix (fraction of shared votes cast the same way) |
-| `lookup_{term}.csv` | person_id → name, party, KMeans cluster |
-| `mp_map_{term}.png` | 2D similarity map, coloured by party |
-| `cross_party_{term}.csv` | MP pairs ranked by agreement across party lines |
-| `dissenters_{term}.csv` | within-party pairs ranked by lowest agreement |
+| `outputs/{term}/agreement_{term}.csv` | MP x MP agreement matrix (fraction of shared votes cast the same way) |
+| `outputs/{term}/lookup_{term}.csv` | person_id → name, party, KMeans cluster |
+| `outputs/{term}/mp_map_{term}.png` | 2D similarity map, coloured by party |
+| `outputs/{term}/cross_party_{term}.csv` | MP pairs ranked by agreement across party lines |
+| `outputs/{term}/dissenters_{term}.csv` | within-party pairs ranked by lowest agreement |
 
 ## Notes
 

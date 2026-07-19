@@ -157,7 +157,7 @@ There is no test suite, linter, or build step in this repo.
   `term_matrix.py` reads only `ballots_clean` + `terms`, not the raw tables,
   so it also needs `build_clean.py` to have been run at least once.
   `pairs_report.py` reads only `agreement_{term}.csv` + `lookup_{term}.csv`
-  from the current directory (no DB), so `term_matrix.py` must have been run
+  from `outputs/{term}/` (no DB), so `term_matrix.py` must have been run
   for that term first.
 - **`term_matrix.py`'s vectorized agreement**: `pairwise_agreement()` builds
   one MP x vote pivot (`NaN` = absent) and computes, for each ballot value
@@ -182,6 +182,15 @@ There is no test suite, linter, or build step in this repo.
   build_clean.py, once. Analysis scripts read ballots_clean and must
   assume its values are already clean — if a value turns out dirty,
   fix build_clean.py and rebuild, never work around it downstream.
+- **Output location convention**: `term_matrix.py` and `pairs_report.py`
+  write/read their term-scoped artifacts (`agreement_{term}.csv`,
+  `lookup_{term}.csv`, `mp_map_{term}.png`, `cross_party_{term}.csv`,
+  `dissenters_{term}.csv`) under `outputs/{term}/`, via the `output_path()` /
+  `output_dir()` helpers in `paths.py`. That's the one place the convention
+  lives — to change where outputs go, edit `paths.py`, not the scripts that
+  call it. `analyse_votes.py` is the exception: it's not term-scoped, doesn't
+  import `paths.py`, and still writes `mp_map.png` / `clusters.csv` /
+  `rebels.csv` / `surprises.csv` to the repo root.
 
 ## Cleaned ballot table (`ballots_clean`)
 
