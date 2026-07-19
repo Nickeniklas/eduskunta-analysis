@@ -23,7 +23,8 @@ fetch_votes.py  ->  build_clean.py  ->  term_matrix.py  ->  pairs_report.py
 
 1. `fetch_votes.py` — resumable sync of the two raw API tables
    (`SaliDBAanestys` vote events, `SaliDBAanestysEdustaja` per-MP ballots)
-   into `votes.db`.
+   into `votes.db`. Use `--sync --update` to top up an already-complete
+   cache with newly published votes.
 2. `build_clean.py` — rebuilds `ballots_clean`: one row per (person, vote),
    Finnish-language rows only (the raw tables are duplicated per language),
    trimmed/normalised values, numeric ballots. Also builds the `terms`
@@ -68,9 +69,10 @@ pip install -r requirements.txt
 # 1. pull the voting data into a local SQLite cache (votes.db)
 #    resumable — safe to interrupt and re-run; multi-hour on first run
 python fetch_votes.py --sync
+python fetch_votes.py --sync --update    # incremental refresh: fetch rows added since last sync
 python fetch_votes.py --sync --reset     # wipe and start over
 
-# 2. build the cleaned ballots_clean table (re-run after every sync)
+# 2. build the cleaned ballots_clean table (re-run after every sync, --update included)
 python build_clean.py
 
 # 3. run the per-term analysis (terms: 1995-99 ... 2023-27)

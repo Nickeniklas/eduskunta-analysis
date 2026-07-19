@@ -18,11 +18,18 @@ page where it left off, and re-fetches from there. A UNIQUE index plus
 INSERT OR IGNORE means re-fetching the page you died on can't create
 duplicates, so resuming is always safe.
 
+Once a table has been fully synced it is marked done and skipped on later
+runs. Pass --update to ignore that flag and fetch whatever the API has
+added since — it also rewinds a couple of pages as a safety overlap.
+
 Usage:
   python fetch_votes.py --list                 # show all tables
   python fetch_votes.py --peek SaliDBAanestys  # print the column names + 1 row
   python fetch_votes.py --sync                 # pull both vote tables into votes.db (resumable)
+  python fetch_votes.py --sync --update        # incremental refresh: pick up rows added since the last sync
   python fetch_votes.py --sync --reset         # wipe first, then full re-pull
+
+Re-run `python build_clean.py` after any sync that pulls new rows.
 """
 
 import argparse
@@ -159,7 +166,7 @@ def _state_done(con, table):
     return bool(row and row[0])
 
 
-def sync(reset=False):
+def sync(reset=False, update=False):
     con = sqlite3.connect(DB)
     _ensure_state(con)
 
@@ -171,12 +178,18 @@ def sync(reset=False):
         print("reset: dropped existing vote tables, starting clean")
 
     for table in (VOTE_TABLE, BALLOT_TABLE):
-        if _state_done(con, table) and not reset:
-            print(f"{table}: already marked complete, skipping (use --reset to redo)")
+        if _state_done(con, table) and not reset and not update:
+            print(f"{table}: already marked complete, skipping "
+                  f"(use --update to refresh, --reset to redo)")
             continue
 
         have = _existing_rows(con, table)
-        start_page = have // PER_PAGE       # resume at the page that contains row `have`
+        if update:
+            # Rewind two pages so the tail we already have is re-fetched as an
+            # overlap; INSERT OR IGNORE drops the duplicates.
+            start_page = max(0, have // PER_PAGE - 2)
+        else:
+            start_page = have // PER_PAGE   # resume at the page that contains row `have`
         if have:
             print(f"syncing {table} ... resuming from page {start_page} "
                   f"({have} rows already cached)")
@@ -234,6 +247,9 @@ def main():
     ap.add_argument("--list", action="store_true", help="list all tables")
     ap.add_argument("--peek", metavar="TABLE", help="show columns + first row of a table")
     ap.add_argument("--sync", action="store_true", help="pull vote tables into votes.db (resumable)")
+    ap.add_argument("--update", action="store_true",
+                    help="with --sync: re-check tables already marked complete and fetch rows "
+                         "added since (rewinds 2 pages as overlap)")
     ap.add_argument("--reset", action="store_true", help="wipe cached vote tables first, then full re-pull")
     ap.add_argument("--db", default=DB, help="sqlite path (default votes.db)")
     args = ap.parse_args()
@@ -245,7 +261,7 @@ def main():
     elif args.peek:
         peek(args.peek)
     elif args.sync:
-        sync(reset=args.reset)
+        sync(reset=args.reset, update=args.update)
     else:
         ap.print_help()
 

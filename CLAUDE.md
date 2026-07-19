@@ -70,6 +70,12 @@ python fetch_votes.py --peek SaliDBAanestys
 python fetch_votes.py --sync
 python fetch_votes.py --sync --db custom.db
 
+# Incremental refresh: pull whatever the API has added since the last sync.
+# Ignores the `done` flag in _sync_state (which otherwise makes --sync skip
+# completed tables) and rewinds 2 pages as a safety overlap.
+# Re-run build_clean.py afterwards.
+python fetch_votes.py --sync --update
+
 # Wipe cached vote tables and do a full re-pull from scratch
 python fetch_votes.py --sync --reset
 
@@ -119,8 +125,19 @@ There is no test suite, linter, or build step in this repo.
   cached rows, computes the start page, and uses `INSERT OR IGNORE` against a
   unique index so re-fetching an incomplete page is harmless. Progress is
   checkpointed to a `_sync_state` table after every 1 000-row buffer flush.
+  Once a table finishes it is flagged `done` and skipped by later `--sync`
+  runs; `--update` ignores that flag and starts from
+  `max(0, have // PER_PAGE - 2)` so the last couple of pages are re-fetched
+  as an overlap (the unique index makes the duplicates no-ops).
   Pass `--reset` to wipe and start clean. `--since` is accepted by both scripts
   but not yet implemented as a real filter (placeholder).
+- **`--update` verified on real data (2026-07-19)**: `--sync --update`
+  resumed from the tail (vote table page 431, ballot table page 86420),
+  fetched +421 vote rows and +18569 ballot rows, and the two-page rewind
+  overlap was correctly deduped by INSERT OR IGNORE. `ballots_clean` grew
+  4,310,882 → 4,324,812 (+13,930) with older terms unchanged, confirming the
+  API appends new rows at the tail rather than reordering — the assumption
+  `--update`'s page arithmetic depends on.
 - **Ballot normalisation**: raw Finnish vote choices (`Jaa`/`Ei`/`Tyhjää`/`Poissa`)
   are normalised via `CHOICE_MAP` to `yes`/`no`/`empty`/`absent`. Anything
   unrecognised defaults to `absent`. Only `yes`/`no` are used for similarity
@@ -169,8 +186,8 @@ There is no test suite, linter, or build step in this repo.
 ## Cleaned ballot table (`ballots_clean`)
 
 `build_clean.py` joins the two raw API tables into a single clean table.
-Facts verified against the live data (714 MPs, ~4.31M ballot rows as of
-2026-07-11):
+Facts verified against the live data (714 MPs, 4,324,812 ballot rows, latest
+vote 2026-06-22, as of 2026-07-19):
 
 - **Raw tables are language-doubled**: both `SaliDBAanestys` and
   `SaliDBAanestysEdustaja` contain a full duplicate row set per language

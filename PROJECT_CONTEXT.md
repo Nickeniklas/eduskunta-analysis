@@ -42,7 +42,9 @@ free.
 - Voting data goes back to **1976**. The ballot table (`SaliDBAanestysEdustaja`) is
   roughly **3–5 million rows** (≈200 MP rows per vote × tens of thousands of votes).
 - A full historic sync is a **multi-hour job** (tens of thousands of pages, with a
-  polite sleep between requests). This is a one-time cost since data is cached locally.
+  polite sleep between requests). This is a one-time cost since data is cached locally;
+  afterwards `--sync --update` tops the cache up with newly published votes in minutes
+  (see "Keeping the data current" below).
 - The API is meant for light use; Eduskunta can throttle heavy single users. Correct
   architecture: **batch-pull once into local SQLite, then analyse the local copy.**
   Never hit the live API per page-view.
@@ -61,14 +63,29 @@ do NOT default to recency filters or partial pulls. Full history is the requirem
 here — `votes.db` currently holds the full 1996–2026 record, matching the `terms` table
 in `build_clean.py`.)
 
+### Keeping the data current
+
+`--sync` marks each table `done` when it finishes and skips it on later runs, so a
+completed cache never refreshes on its own. `python fetch_votes.py --sync --update`
+ignores that flag and resumes near the tail, re-fetching two pages of overlap that
+`INSERT OR IGNORE` dedups. Then re-run `python build_clean.py` — `ballots_clean` is
+rebuilt from scratch, so new raw rows are invisible to analysis until it does.
+
+Verified on real data 2026-07-19: +421 vote rows, +18,569 ballot rows, `ballots_clean`
+4,310,882 → 4,324,812, older terms unchanged. That last part matters — it confirms the
+API appends at the tail rather than reordering, which is the assumption `--update`'s
+page arithmetic rests on. If a future update ever shows older terms shifting, that
+assumption has broken and `--sync --reset` is the ground-truth rebuild.
+
 ## Current state
 
 The full pipeline described in [README.md](README.md) is built and working, run
-end-to-end at least once for term `2019-23`:
+end-to-end at least once for term `2019-23`. As of 2026-07-19 the cache holds
+4,324,812 cleaned ballot rows across 714 MPs, latest vote 2026-06-22:
 
 - `fetch_votes.py` — resumable sync of the two raw tables into `votes.db`. Has
-  `--peek`, `--list`, `--sync` (`--reset` for a full wipe). Schema-tolerant (column
-  names guessed from candidates).
+  `--peek`, `--list`, `--sync` (`--update` for an incremental refresh, `--reset` for a
+  full wipe). Schema-tolerant (column names guessed from candidates).
 - `build_clean.py` — rebuilds `ballots_clean` (one row per person/vote, Finnish-only,
   trimmed/lowercased/numeric) and the `terms` reference table. All value normalisation
   lives here now (see the "Layering rule" in CLAUDE.md) — analysis scripts assume
