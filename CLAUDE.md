@@ -122,15 +122,39 @@ There is no test suite, linter, or build step in this repo.
   Eduskunta API renames a column, update the candidate lists or pass the
   override flag rather than rewriting the loader.
 - **Sync is resumable**: `--sync` resumes from where it left off — it counts
-  cached rows, computes the start page, and uses `INSERT OR IGNORE` against a
-  unique index so re-fetching an incomplete page is harmless. Progress is
+  cached rows, computes the start page, and inserts against a unique index on
+  each table's natural key (`KEY_COLS`) so re-fetching an incomplete page is
+  harmless: `INSERT OR IGNORE` for the ballot table (`EdustajaId, AanestysId`),
+  `INSERT OR REPLACE` for the vote table (`AanestysId, KieliId`), so API edits
+  to a vote row in the `--update` overlap overwrite the cached copy. Progress is
   checkpointed to a `_sync_state` table after every 1 000-row buffer flush.
   Once a table finishes it is flagged `done` and skipped by later `--sync`
   runs; `--update` ignores that flag and starts from
   `max(0, have // PER_PAGE - 2)` so the last couple of pages are re-fetched
   as an overlap (the unique index makes the duplicates no-ops).
-  Pass `--reset` to wipe and start clean. `--since` is accepted by both scripts
-  but not yet implemented as a real filter (placeholder).
+  Pass `--reset` to wipe and start clean. `--since` exists only on
+  `analyse_votes.py`, and only as a placeholder (not implemented as a real
+  filter); `fetch_votes.py` has no `--since`.
+- **NULLs in a UNIQUE index gotcha**: SQLite treats NULLs as distinct from
+  each other in a UNIQUE index, so a key with a NULL part never conflicts and
+  `INSERT OR IGNORE` lets exact duplicates straight through. The vote table
+  used to be keyed on *every* column; `IstuntoIlmoitettuAlkuaika` is often
+  NULL, and 4 vote events (8 rows with their Swedish twins, all from the
+  2009-01-15 session) got cached twice. Every ballot of those votes then fanned
+  out in `build_clean.py`'s join, giving 796 duplicate (person, vote) pairs in
+  `ballots_clean`. Fixed 2026-11-06 by keying the vote table on
+  `(AanestysId, KieliId)` (verified unique and never NULL once exact
+  duplicates are ignored). Key columns in `KEY_COLS` must never be nullable.
+- **Vote-table key migration (2026-11-06, one-off, already applied to the
+  local `votes.db`)**: deleted the exact-duplicate vote rows keeping the
+  lowest rowid (compared with `IS`, so NULL matches NULL), dropped the old
+  whole-row `ux_SaliDBAanestys` and recreated it on `(AanestysId, KieliId)`.
+  `_ensure_table` uses `CREATE UNIQUE INDEX IF NOT EXISTS` under the same
+  index name, so it does **not** migrate an older DB by itself: a `votes.db`
+  built before this change needs the same three steps (or a `--reset`).
+  Afterwards `SaliDBAanestys` went 43,603 → 43,595 rows; `_sync_state.rows`
+  still shows the old count until the next sync rewrites it, which is
+  harmless (only the live row count drives the resume page).
 - **`--update` verified on real data (2026-07-19)**: `--sync --update`
   resumed from the tail (vote table page 431, ballot table page 86420),
   fetched +421 vote rows and +18569 ballot rows, and the two-page rewind
@@ -195,8 +219,8 @@ There is no test suite, linter, or build step in this repo.
 ## Cleaned ballot table (`ballots_clean`)
 
 `build_clean.py` joins the two raw API tables into a single clean table.
-Facts verified against the live data (714 MPs, 4,324,812 ballot rows, latest
-vote 2026-06-22, as of 2026-07-19):
+Facts verified against the live data (714 MPs, 4,331,180 ballot rows, 21,765
+votes, latest vote 2026-10-23, as of 2026-11-06):
 
 - **Raw tables are language-doubled**: both `SaliDBAanestys` and
   `SaliDBAanestysEdustaja` contain a full duplicate row set per language
@@ -213,8 +237,19 @@ vote 2026-06-22, as of 2026-07-19):
   different `EdustajaHenkiloNumero` share a name), but ~19 persons have 2
   different name spellings on record (marriage/legal name changes, e.g.
   Elina Lepomäki → Elina Valtonen).
-- **Vote date** is `IstuntoPvm` on `SaliDBAanestys`, ISO format with a
-  `00:00:00` time component (date only, no real time-of-day precision).
+- **Vote date** comes from `IstuntoPvm` (session date) on `SaliDBAanestys`.
+  It is Finnish local midnight, but the raw timestamp is not consistently
+  `00:00:00`: up to 2017 it mostly is, while from 2018 on (and sporadically
+  2009-15) the API serialises it as UTC, i.e. `22:00:00` (EET, winter) or
+  `21:00:00` (EEST, summer) on the *previous* day. Taking `date()` of the raw
+  value therefore puts ~7,800 votes one day early. `build_clean.py` stores
+  `vote_date = date(IstuntoPvm, '+3 hours')`, a plain local `YYYY-MM-DD`
+  with no time part. Verified 2026-11-06 against each vote's own
+  `AanestysAlkuaika`: 7,801 / 7,802 Finnish rows from 2018 on agree (the one
+  mismatch is a session whose votes ran two days after it opened), and all 28
+  pre-2018 mismatches are sessions that ran past midnight. The fix moved no
+  vote across a term boundary. Raw-table queries (including
+  `analyse_votes.py`) still see the unshifted timestamps.
 - **Finnish `Tyhjää` = Swedish `Avstår` + `Blank` combined**: Swedish
   distinguishes two abstention types where Finnish only has one, which is
   part of why cleaning/analysis works from the Finnish-language rows only.
@@ -222,7 +257,11 @@ vote 2026-06-22, as of 2026-07-19):
   lowercased; `ballot` is `1` (Jaa/yes), `-1` (Ei/no), `0` (Tyhjää/abstain),
   or `NULL` (Poissa/absent); only Finnish-language, non-annulled
   (`AanestysMitatoity = '0'`) votes are included. Indexed on `person_id` and
-  `vote_id`.
+  `vote_id`. `BUILD_SQL` joins ballots to a `SELECT DISTINCT AanestysId,
+  IstuntoPvm, KieliId, AanestysMitatoity` subquery rather than the raw vote
+  table, so a duplicated raw vote row can't fan out ballots; `build_clean.py`
+  prints the number of duplicate (person_id, vote_id) pairs after every
+  rebuild, and it must be 0.
 - **`ballots_clean.party` is trimmed at the source**: `build_clean.py`'s
   `BUILD_SQL` wraps `EdustajaRyhmaLyhenne` in `LOWER(TRIM(...))`, so
   `party` values are already clean (e.g. `'kok'`, not `'kok       '`).
@@ -235,6 +274,7 @@ vote 2026-06-22, as of 2026-07-19):
   list in that script — one row per Finnish parliamentary term, covering
   1995-99 through 2023-27. A ninth row will be needed once the 2027 election
   result is known; update `TERMS` in `build_clean.py` when it is. Join on
-  `date(vote_date) BETWEEN start_date AND end_date` (use `date()` to strip
-  the `00:00:00` time suffix, otherwise votes on a term's exact end date
-  compare as outside the range).
+  `date(vote_date) BETWEEN start_date AND end_date`. `vote_date` is already a
+  plain `YYYY-MM-DD`, so the `date()` is now a harmless no-op (existing
+  queries in `build_clean.py` / `term_matrix.py` keep it). It only matters
+  for a timestamp with a time part, e.g. raw `IstuntoPvm`.

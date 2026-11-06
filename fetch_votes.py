@@ -14,9 +14,10 @@ Data is CC BY 4.0 (credit: Eduskunta / Parliament of Finland).
 
 Sync is RESUMABLE: it never wipes existing rows (unless you pass --reset).
 On restart it counts the rows already cached for each table, jumps to the
-page where it left off, and re-fetches from there. A UNIQUE index plus
-INSERT OR IGNORE means re-fetching the page you died on can't create
-duplicates, so resuming is always safe.
+page where it left off, and re-fetches from there. A UNIQUE index on each
+table's natural key (INSERT OR IGNORE for ballots, INSERT OR REPLACE for
+votes) means re-fetching the page you died on can't create duplicates, so
+resuming is always safe.
 
 Once a table has been fully synced it is marked done and skipped on later
 runs. Pass --update to ignore that flag and fetch whatever the API has
@@ -51,10 +52,21 @@ BALLOT_TABLE = "SaliDBAanestysEdustaja"
 
 # Natural key per table, used to dedup so a re-fetched page can't double-insert.
 # The ballot table has no single id column; one MP + one vote is unique.
-# The vote table is tiny, so we just dedup on the whole row (key=None -> all cols).
+# The vote table is one row per vote per language. Key columns must never be
+# NULL: SQLite treats NULLs as distinct in a UNIQUE index, so a NULL key part
+# silently lets exact duplicates through. (The old whole-row key did exactly
+# that via the often-NULL IstuntoIlmoitettuAlkuaika.)
 KEY_COLS = {
     BALLOT_TABLE: ["EdustajaId", "AanestysId"],
-    VOTE_TABLE: None,   # None => use every column as the key
+    VOTE_TABLE: ["AanestysId", "KieliId"],
+}
+
+# Conflict policy per table when a fetched row's key already exists.
+# Vote rows: REPLACE, so API edits to an existing vote (picked up in the
+# --update overlap) overwrite the cached copy. Ballots: IGNORE.
+INSERT_VERB = {
+    BALLOT_TABLE: "INSERT OR IGNORE",
+    VOTE_TABLE: "INSERT OR REPLACE",
 }
 
 
@@ -137,9 +149,8 @@ def _fetch_table(table, start_page=0):
 def _ensure_table(con, table, cols):
     safe_cols = ", ".join(f'"{c}" TEXT' for c in cols)
     con.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({safe_cols})')
-    # Unique index on the natural key so INSERT OR IGNORE dedups re-fetched pages.
-    key = KEY_COLS.get(table)
-    key = key if key else cols           # None => whole-row key
+    # Unique index on the natural key so re-fetched pages can't double-insert.
+    key = KEY_COLS[table]
     key_sql = ", ".join(f'"{c}"' for c in key)
     idx = f"ux_{table}"
     con.execute(f'CREATE UNIQUE INDEX IF NOT EXISTS "{idx}" ON "{table}" ({key_sql})')
@@ -186,7 +197,7 @@ def sync(reset=False, update=False):
         have = _existing_rows(con, table)
         if update:
             # Rewind two pages so the tail we already have is re-fetched as an
-            # overlap; INSERT OR IGNORE drops the duplicates.
+            # overlap; the unique key dedups it (votes are refreshed in place).
             start_page = max(0, have // PER_PAGE - 2)
         else:
             start_page = have // PER_PAGE   # resume at the page that contains row `have`
@@ -225,10 +236,10 @@ def sync(reset=False, update=False):
 
 def _flush(con, table, cols, buf):
     placeholders = ",".join("?" * len(cols))
-    # OR IGNORE: rows already present (same natural key) are silently skipped,
-    # so re-fetching the page we died on mid-write is harmless.
+    # Rows already present (same natural key) are skipped (ballots) or
+    # overwritten (votes), so re-fetching the page we died on is harmless.
     con.executemany(
-        f'INSERT OR IGNORE INTO "{table}" VALUES ({placeholders})', buf
+        f'{INSERT_VERB[table]} INTO "{table}" VALUES ({placeholders})', buf
     )
 
 

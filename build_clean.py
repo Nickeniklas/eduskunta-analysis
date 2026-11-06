@@ -10,7 +10,11 @@ SELECT
   e.EdustajaEtunimi || ' ' || e.EdustajaSukunimi AS name,
   LOWER(TRIM(e.EdustajaRyhmaLyhenne)) AS party,
   a.AanestysId AS vote_id,
-  a.IstuntoPvm AS vote_date,
+  -- IstuntoPvm is Finnish local midnight, but from 2018 on (and sporadically
+  -- 2009-15) the API serialises it as UTC: 22:00 (EET) / 21:00 (EEST) on the
+  -- previous day. +3 hours lands every variant on the right local date, and
+  -- date() stores it as plain YYYY-MM-DD.
+  date(a.IstuntoPvm, '+3 hours') AS vote_date,
   CASE TRIM(e.EdustajaAanestys)
     WHEN 'Jaa' THEN 1
     WHEN 'Ei' THEN -1
@@ -18,7 +22,12 @@ SELECT
     WHEN 'Poissa' THEN NULL
   END AS ballot
 FROM SaliDBAanestysEdustaja e
-JOIN SaliDBAanestys a ON a.AanestysId = e.AanestysId
+-- DISTINCT guards against exact-duplicate vote rows in the raw table, which
+-- would otherwise fan out every ballot of that vote.
+JOIN (
+  SELECT DISTINCT AanestysId, IstuntoPvm, KieliId, AanestysMitatoity
+  FROM SaliDBAanestys
+) a ON a.AanestysId = e.AanestysId
 WHERE a.KieliId = '1' AND a.AanestysMitatoity = '0';
 """
 
@@ -90,6 +99,18 @@ def main():
         """
     ).fetchone()[0]
     print(f"\nballots_clean rows outside every term: {outside_count:,}")
+
+    # Sanity check: ballots_clean must be one row per (person, vote). Anything
+    # non-zero means duplicates crept in upstream (see the DISTINCT in BUILD_SQL).
+    dup_pairs = cur.execute(
+        """
+        SELECT COUNT(*) FROM (
+          SELECT 1 FROM ballots_clean
+          GROUP BY person_id, vote_id HAVING COUNT(*) > 1
+        );
+        """
+    ).fetchone()[0]
+    print(f"duplicate (person_id, vote_id) pairs: {dup_pairs:,}")
 
     conn.close()
 
