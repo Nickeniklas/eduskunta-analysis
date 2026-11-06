@@ -119,10 +119,23 @@ end-to-end at least once for term `2019-23`. As of 2026-07-19 the cache holds
   folder survives a fresh clone) instead of the old per-file globs.
 
 ### Open items (not blocking, nothing urgent)
-1. Port `rebels.csv` / `surprises.csv` (party-line rebels, closest votes) to the
+1. **Next build: `longitudinal.py`** (planned 2026-07-20, not started). Pure consumer like
+   `pairs_report.py`: reads `agreement_{term}.csv` + `lookup_{term}.csv` for every term that
+   has been run, never touches the DB. Computes metrics that are comparable across terms
+   (agreement stats, not cluster labels): within-party cohesion per party per term, mean
+   cross-party agreement per party pair per term, optionally a polarization gap (within vs
+   cross). Step zero: run `term_matrix.py` for all eight terms (only `2019-23` so far).
+   Open decisions before the Claude Code handoff:
+   - Party code continuity: canonical-code mapping in `build_clean.py` (e.g. `skl` → `kd`,
+     splinters like `vkk`) vs raw codes with discontinuous trend lines. Mapping upstream
+     changes `ballots_clean`'s contract.
+   - Government/opposition framing in v1 or deferred. Governments change mid-term, so it
+     would need a per-government reference table, not per-term.
+   - Whether `--min-ballots 100` is still appropriate for early terms.
+2. Port `rebels.csv` / `surprises.csv` (party-line rebels, closest votes) to the
    term-scoped pipeline, if still wanted — the last reason `analyse_votes.py` is kept.
-2. `build_clean.py`'s `TERMS` list needs a ninth row once the 2027 election result is
-   known.
+3. `build_clean.py`'s `TERMS` list needs a ninth row once the 2027 election result is
+   known (election is April 2027).
 
 ## Interpretation caveat
 
