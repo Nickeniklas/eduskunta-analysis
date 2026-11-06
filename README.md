@@ -27,8 +27,10 @@ fetch_votes.py  ->  build_clean.py  ->  term_matrix.py  ->  pairs_report.py
    cache with newly published votes.
 2. `build_clean.py` — rebuilds `ballots_clean`: one row per (person, vote),
    Finnish-language rows only (the raw tables are duplicated per language),
-   trimmed/normalised values, numeric ballots. Also builds the `terms`
-   reference table. **Re-run after every sync.**
+   trimmed/normalised values, numeric ballots. Renamed party codes are
+   mapped to one canonical code in `party` (original kept in `party_raw`).
+   Also builds the `terms` and `party_map` reference tables. **Re-run after
+   every sync.**
 3. `term_matrix.py` — for one parliamentary term, produces the MP x MP
    agreement matrix, an MP lookup (name, party, cluster), and the
    similarity-map PNG.

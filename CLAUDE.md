@@ -253,8 +253,9 @@ votes, latest vote 2026-10-23, as of 2026-11-06):
 - **Finnish `Tyhjää` = Swedish `Avstår` + `Blank` combined**: Swedish
   distinguishes two abstention types where Finnish only has one, which is
   part of why cleaning/analysis works from the Finnish-language rows only.
-- **`ballots_clean` encoding**: one row per (person, vote); `party` is
-  lowercased; `ballot` is `1` (Jaa/yes), `-1` (Ei/no), `0` (Tyhjää/abstain),
+- **`ballots_clean` encoding**: one row per (person, vote); `party` is the
+  canonical lowercased party code and `party_raw` the code as recorded (see
+  `party` vs `party_raw` below); `ballot` is `1` (Jaa/yes), `-1` (Ei/no), `0` (Tyhjää/abstain),
   or `NULL` (Poissa/absent); only Finnish-language, non-annulled
   (`AanestysMitatoity = '0'`) votes are included. Indexed on `person_id` and
   `vote_id`. `BUILD_SQL` joins ballots to a `SELECT DISTINCT AanestysId,
@@ -269,6 +270,23 @@ votes, latest vote 2026-10-23, as of 2026-11-06):
   had to strip it locally; that workaround has been removed now that the
   fix lives in `build_clean.py` (see the layering rule under Architecture
   notes).
+- **`party` vs `party_raw`, and `PARTY_MAP`** (added 2026-11-06):
+  `party_raw = LOWER(TRIM(EdustajaRyhmaLyhenne))` is the code exactly as the
+  API recorded it at the time of the vote. `party = COALESCE(canonical_code,
+  party_raw)` via a `LEFT JOIN` to the `party_map` table, which
+  `build_clean.py` (re)writes from its hardcoded `PARTY_MAP` list (next to
+  `TERMS`) *before* building `ballots_clean`. Current mappings:
+  `skl→kd`, `uv→sin`, `si→sin`, `hh→liik`. **Renames only**: a mapping is
+  for the same parliamentary group appearing under an older or interim code.
+  Splits (a group breaking away from its party) and one-MP groups keep their
+  own codes — never map them into a parent party. Analysis code uses
+  `party`; `party_raw` is there for auditing or for anything that needs the
+  historical label. Verified after the change: row count unchanged
+  (4,331,180), duplicate pairs 0, `skl`/`uv`/`si`/`hh` absent from `party`
+  but present in `party_raw` (12,575 rows remapped), `kd` now starts
+  1996-06-12 (21 MPs) and `sin` 2017-06-14 (21 MPs). Because `uv`/`si` now
+  merge into `sin`, `term_matrix.py` outputs for 2015-19 (and any 1995-99 /
+  1999-03 `skl` MPs) change after a rebuild — re-run them.
 - **`terms` table**: `build_clean.py` also (re)builds a small `terms`
   reference table (`term`, `start_date`, `end_date`) hardcoded as the `TERMS`
   list in that script — one row per Finnish parliamentary term, covering

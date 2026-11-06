@@ -8,7 +8,10 @@ CREATE TABLE ballots_clean AS
 SELECT
   e.EdustajaHenkiloNumero AS person_id,
   e.EdustajaEtunimi || ' ' || e.EdustajaSukunimi AS name,
-  LOWER(TRIM(e.EdustajaRyhmaLyhenne)) AS party,
+  -- party is the canonical code (party_map renames applied); party_raw keeps
+  -- the code as the API recorded it at the time of the vote.
+  COALESCE(pm.canonical_code, LOWER(TRIM(e.EdustajaRyhmaLyhenne))) AS party,
+  LOWER(TRIM(e.EdustajaRyhmaLyhenne)) AS party_raw,
   a.AanestysId AS vote_id,
   -- IstuntoPvm is Finnish local midnight, but from 2018 on (and sporadically
   -- 2009-15) the API serialises it as UTC: 22:00 (EET) / 21:00 (EEST) on the
@@ -28,6 +31,7 @@ JOIN (
   SELECT DISTINCT AanestysId, IstuntoPvm, KieliId, AanestysMitatoity
   FROM SaliDBAanestys
 ) a ON a.AanestysId = e.AanestysId
+LEFT JOIN party_map pm ON pm.raw_code = LOWER(TRIM(e.EdustajaRyhmaLyhenne))
 WHERE a.KieliId = '1' AND a.AanestysMitatoity = '0';
 """
 
@@ -48,6 +52,16 @@ TERMS = [
     ("2023-27", "2023-04-15", "2027-04-14"),
 ]
 
+# Party-code renames: (raw_code, canonical_code), both lowercased/trimmed.
+# Renames only — the same parliamentary group under an older/interim code.
+# Splits and one-MP groups keep their own codes.
+PARTY_MAP = [
+    ("skl", "kd"),
+    ("uv", "sin"),
+    ("si", "sin"),
+    ("hh", "liik"),
+]
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -56,6 +70,11 @@ def main():
 
     conn = sqlite3.connect(args.db)
     cur = conn.cursor()
+
+    # party_map must exist before BUILD_SQL, which LEFT JOINs to it.
+    cur.execute("DROP TABLE IF EXISTS party_map;")
+    cur.execute("CREATE TABLE party_map (raw_code TEXT PRIMARY KEY, canonical_code TEXT NOT NULL);")
+    cur.executemany("INSERT INTO party_map VALUES (?, ?);", PARTY_MAP)
 
     cur.execute("DROP TABLE IF EXISTS ballots_clean;")
     cur.execute(BUILD_SQL)
@@ -111,6 +130,15 @@ def main():
         """
     ).fetchone()[0]
     print(f"duplicate (person_id, vote_id) pairs: {dup_pairs:,}")
+
+    print("\nparties (after party_map):")
+    for party, first, last, mps in cur.execute(
+        """
+        SELECT party, MIN(vote_date), MAX(vote_date), COUNT(DISTINCT person_id)
+        FROM ballots_clean GROUP BY party ORDER BY MIN(vote_date), party;
+        """
+    ):
+        print(f"  {party:<6} {first} .. {last}  {mps:>3} MPs")
 
     conn.close()
 
