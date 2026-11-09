@@ -57,7 +57,7 @@ so a sync wasn't resumable — a stop partway meant starting over. After losing 
 this way, this was fixed: `--sync` now counts cached rows, resumes from the right page,
 and uses `INSERT OR IGNORE` + a `_sync_state` checkpoint table so an interrupted sync
 picks up where it left off. `--reset` still does the old wipe-and-restart if you want
-it. See the "Sync is resumable" note in [CLAUDE.md](CLAUDE.md).
+it. See the "Sync is resumable" note in [CLAUDE.md](../CLAUDE.md).
 
 Note: this project needs **full historic data** (analysis spans the whole record), so
 do NOT default to recency filters or partial pulls. Full history is the requirement.
@@ -80,9 +80,10 @@ assumption has broken and `--sync --reset` is the ground-truth rebuild.
 
 ## Current state
 
-The full pipeline described in [README.md](README.md) is built and working, run
-end-to-end at least once for term `2019-23`. As of 2026-07-19 the cache holds
-4,324,812 cleaned ballot rows across 714 MPs, latest vote 2026-06-22:
+The full pipeline described in [README.md](../README.md) is built and working, and
+`term_matrix.py` has been run for all eight terms (1995-99 … 2023-27). As of
+2026-11-09 the cache holds 4,331,180 cleaned ballot rows across 714 MPs, latest
+vote 2026-10-23:
 
 - `fetch_votes.py` — resumable sync of the two raw tables into `votes.db`. Has
   `--peek`, `--list`, `--sync` (`--update` for an incremental refresh, `--reset` for a
@@ -124,11 +125,11 @@ end-to-end at least once for term `2019-23`. As of 2026-07-19 the cache holds
    has been run, never touches the DB. Computes metrics that are comparable across terms
    (agreement stats, not cluster labels): within-party cohesion per party per term, mean
    cross-party agreement per party pair per term, optionally a polarization gap (within vs
-   cross). Step zero: run `term_matrix.py` for all eight terms (only `2019-23` so far).
+   cross). Step zero (run `term_matrix.py` for all eight terms) is done.
+   Decided: party code continuity is handled upstream by `PARTY_MAP` in `build_clean.py`
+   (renames only, e.g. `skl` → `kd`; splinters keep their own codes), which writes
+   `party` alongside the as-recorded `party_raw` in `ballots_clean`.
    Open decisions before the Claude Code handoff:
-   - Party code continuity: canonical-code mapping in `build_clean.py` (e.g. `skl` → `kd`,
-     splinters like `vkk`) vs raw codes with discontinuous trend lines. Mapping upstream
-     changes `ballots_clean`'s contract.
    - Government/opposition framing in v1 or deferred. Governments change mid-term, so it
      would need a per-government reference table, not per-term.
    - Whether `--min-ballots 100` is still appropriate for early terms.

@@ -40,6 +40,37 @@ data from the open data API and analyses voting behaviour:
 
 Data is CC BY 4.0 (credit: Eduskunta / Parliament of Finland).
 
+## Status
+
+- **Pipeline**: `fetch_votes.py` → `build_clean.py` → `term_matrix.py` →
+  `pairs_report.py` is the current pipeline. `analyse_votes.py` is kept only
+  for `rebels.csv` / `surprises.csv`.
+- **Local `votes.db`** (last synced and rebuilt 2026-11-06, re-checked
+  2026-11-09): `SaliDBAanestys` 43,595 rows, `SaliDBAanestysEdustaja`
+  8,675,295 rows; `ballots_clean` 4,331,180 rows, 714 persons, 21,765 votes,
+  latest vote 2026-10-23, 0 duplicate (person, vote) pairs, 12,575 rows
+  remapped by `party_map`. The vote-table unique index is already on
+  `(AanestysId, KieliId)`. `_sync_state.rows` for `SaliDBAanestys` still
+  reads 43,603 (pre-dedup); harmless, see "Sync is resumable".
+- **Outputs**: `term_matrix.py` has been run for all eight terms
+  (`outputs/1995-99` … `outputs/2023-27`), after the `party_map` rebuild.
+  No `pairs_report.py` outputs are on disk; run it per term as needed.
+- **`analyse_votes.py` against the current schema**: its default column
+  guesses do not match the real ballot columns — `party` and `choice` find
+  no candidate (real names `EdustajaRyhmaLyhenne`, `EdustajaAanestys`) and
+  `mp` resolves to `EdustajaId`, which is not a person key. Pass the
+  `--col-*` overrides shown under Commands (that invocation is untested). It also
+  reads both language rows (no `KieliId = '1'` filter).
+- **Next planned build**: `longitudinal.py` (cross-term comparison from the
+  per-term CSVs), not started; plan and open decisions are in
+  `docs/PROJECT_CONTEXT.md` under "Open items".
+- **`TERMS`** covers 1995-99 through 2023-27; add a ninth row to `TERMS` in
+  `build_clean.py` once the 2027 election result is known.
+- No test suite, linter, build step, CI, deployment, or scheduled jobs. Syncs
+  are run by hand.
+
+Session history: docs/STATUS_LOG.md (read when needed)
+
 ## Setup
 
 ```bash
@@ -98,9 +129,11 @@ python pairs_report.py --term 2019-23 --cluster 2      # members of KMeans clust
 python analyse_votes.py
 python analyse_votes.py --db custom.db --min-votes 20
 
-# Override guessed column names if the API schema changes (see "Column
-# name guessing" below for the full flag list)
-python analyse_votes.py --col-mp EdustajaId --col-party RyhmaLyhenne
+# Override guessed column names (see "Schema tolerance" under Architecture
+# notes; flags: --col-vote-id --col-mp --col-mp-name --col-party
+# --col-choice --col-v-vote-id). With the current API schema the defaults
+# miss party and choice, so override them with the real column names:
+python analyse_votes.py --col-mp EdustajaHenkiloNumero --col-party EdustajaRyhmaLyhenne --col-choice EdustajaAanestys
 ```
 
 ### Dependencies
@@ -108,8 +141,6 @@ python analyse_votes.py --col-mp EdustajaId --col-party RyhmaLyhenne
 Listed in `requirements.txt`: `pandas numpy scikit-learn matplotlib umap-learn`.
 `umap-learn` is optional — used for a nicer 2D projection if installed, falls
 back to PCA otherwise. `fetch_votes.py` only uses the standard library.
-
-There is no test suite, linter, or build step in this repo.
 
 ## Architecture notes
 
@@ -120,7 +151,9 @@ There is no test suite, linter, or build step in this repo.
   `VOTE_DEFAULTS` (lists of candidate names tried in order via `pick()`), and
   every guessable field has a corresponding `--col-*` CLI override. If the
   Eduskunta API renames a column, update the candidate lists or pass the
-  override flag rather than rewriting the loader.
+  override flag rather than rewriting the loader. An override that names a
+  column that doesn't exist is silently ignored and the candidate list is
+  tried instead.
 - **Sync is resumable**: `--sync` resumes from where it left off — it counts
   cached rows, computes the start page, and inserts against a unique index on
   each table's natural key (`KEY_COLS`) so re-fetching an incomplete page is
@@ -132,41 +165,33 @@ There is no test suite, linter, or build step in this repo.
   runs; `--update` ignores that flag and starts from
   `max(0, have // PER_PAGE - 2)` so the last couple of pages are re-fetched
   as an overlap (the unique index makes the duplicates no-ops).
+  Only the live row count drives the resume page; `_sync_state.rows` is
+  informational and can lag it.
   Pass `--reset` to wipe and start clean. `--since` exists only on
   `analyse_votes.py`, and only as a placeholder (not implemented as a real
   filter); `fetch_votes.py` has no `--since`.
+- **`--update` assumes the API appends at the tail**: new rows arrive at the
+  end of each table rather than reordering existing pages; `--update`'s page
+  arithmetic depends on this. Confirmed on real data (see the log).
 - **NULLs in a UNIQUE index gotcha**: SQLite treats NULLs as distinct from
   each other in a UNIQUE index, so a key with a NULL part never conflicts and
-  `INSERT OR IGNORE` lets exact duplicates straight through. The vote table
-  used to be keyed on *every* column; `IstuntoIlmoitettuAlkuaika` is often
-  NULL, and 4 vote events (8 rows with their Swedish twins, all from the
-  2009-01-15 session) got cached twice. Every ballot of those votes then fanned
-  out in `build_clean.py`'s join, giving 796 duplicate (person, vote) pairs in
-  `ballots_clean`. Fixed 2026-11-06 by keying the vote table on
-  `(AanestysId, KieliId)` (verified unique and never NULL once exact
-  duplicates are ignored). Key columns in `KEY_COLS` must never be nullable.
-- **Vote-table key migration (2026-11-06, one-off, already applied to the
-  local `votes.db`)**: deleted the exact-duplicate vote rows keeping the
-  lowest rowid (compared with `IS`, so NULL matches NULL), dropped the old
-  whole-row `ux_SaliDBAanestys` and recreated it on `(AanestysId, KieliId)`.
-  `_ensure_table` uses `CREATE UNIQUE INDEX IF NOT EXISTS` under the same
-  index name, so it does **not** migrate an older DB by itself: a `votes.db`
-  built before this change needs the same three steps (or a `--reset`).
-  Afterwards `SaliDBAanestys` went 43,603 → 43,595 rows; `_sync_state.rows`
-  still shows the old count until the next sync rewrites it, which is
-  harmless (only the live row count drives the resume page).
-- **`--update` verified on real data (2026-07-19)**: `--sync --update`
-  resumed from the tail (vote table page 431, ballot table page 86420),
-  fetched +421 vote rows and +18569 ballot rows, and the two-page rewind
-  overlap was correctly deduped by INSERT OR IGNORE. `ballots_clean` grew
-  4,310,882 → 4,324,812 (+13,930) with older terms unchanged, confirming the
-  API appends new rows at the tail rather than reordering — the assumption
-  `--update`'s page arithmetic depends on.
-- **Ballot normalisation**: raw Finnish vote choices (`Jaa`/`Ei`/`Tyhjää`/`Poissa`)
-  are normalised via `CHOICE_MAP` to `yes`/`no`/`empty`/`absent`. Anything
-  unrecognised defaults to `absent`. Only `yes`/`no` are used for similarity
-  encoding (`+1`/`-1`); `empty`/`absent` encode as `0` so non-votes don't fake
-  agreement.
+  `INSERT OR IGNORE` lets exact duplicates straight through. Key columns in
+  `KEY_COLS` must never be nullable. (This is why the vote table is keyed on
+  `(AanestysId, KieliId)`, not on every column.)
+- **Changing `KEY_COLS` doesn't migrate an existing DB**: `_ensure_table`
+  uses `CREATE UNIQUE INDEX IF NOT EXISTS` under a fixed name
+  (`ux_{table}`), so an existing `votes.db` keeps its old index. Migrate by
+  hand — delete exact-duplicate rows keeping the lowest rowid (compare with
+  `IS` so NULL matches NULL), drop `ux_{table}`, recreate it on the new key —
+  or run `--sync --reset`.
+- **Ballot normalisation in `analyse_votes.py`**: raw Finnish vote choices
+  (`Jaa`/`Ei`/`Tyhjää`/`Poissa`) are normalised via `CHOICE_MAP` to
+  `yes`/`no`/`empty`/`absent`. Anything unrecognised defaults to `absent`.
+  Only `yes`/`no` are used for similarity encoding (`+1`/`-1`);
+  `empty`/`absent` encode as `0` so non-votes don't fake agreement.
+  `term_matrix.py` works differently, from `ballots_clean.ballot`: absent is
+  `NULL` (excluded from shared votes), while abstain (`0`) is a cast ballot
+  and two abstentions count as agreement.
 - **"Party line" definition**: for `rebels.csv`, the party line on a vote is
   the *mode* (majority choice) of that party's `yes`/`no` votes on that vote —
   not the government/opposition whip position.
@@ -219,8 +244,7 @@ There is no test suite, linter, or build step in this repo.
 ## Cleaned ballot table (`ballots_clean`)
 
 `build_clean.py` joins the two raw API tables into a single clean table.
-Facts verified against the live data (714 MPs, 4,331,180 ballot rows, 21,765
-votes, latest vote 2026-10-23, as of 2026-11-06):
+Facts about the source data that the cleaning step relies on:
 
 - **Raw tables are language-doubled**: both `SaliDBAanestys` and
   `SaliDBAanestysEdustaja` contain a full duplicate row set per language
@@ -244,12 +268,8 @@ votes, latest vote 2026-10-23, as of 2026-11-06):
   `21:00:00` (EEST, summer) on the *previous* day. Taking `date()` of the raw
   value therefore puts ~7,800 votes one day early. `build_clean.py` stores
   `vote_date = date(IstuntoPvm, '+3 hours')`, a plain local `YYYY-MM-DD`
-  with no time part. Verified 2026-11-06 against each vote's own
-  `AanestysAlkuaika`: 7,801 / 7,802 Finnish rows from 2018 on agree (the one
-  mismatch is a session whose votes ran two days after it opened), and all 28
-  pre-2018 mismatches are sessions that ran past midnight. The fix moved no
-  vote across a term boundary. Raw-table queries (including
-  `analyse_votes.py`) still see the unshifted timestamps.
+  with no time part. Raw-table queries (including `analyse_votes.py`) still
+  see the unshifted timestamps.
 - **Finnish `Tyhjää` = Swedish `Avstår` + `Blank` combined**: Swedish
   distinguishes two abstention types where Finnish only has one, which is
   part of why cleaning/analysis works from the Finnish-language rows only.
@@ -266,11 +286,9 @@ votes, latest vote 2026-10-23, as of 2026-11-06):
 - **`ballots_clean.party` is trimmed at the source**: `build_clean.py`'s
   `BUILD_SQL` wraps `EdustajaRyhmaLyhenne` in `LOWER(TRIM(...))`, so
   `party` values are already clean (e.g. `'kok'`, not `'kok       '`).
-  Previously `party` was only lowercased, not trimmed, and analysis code
-  had to strip it locally; that workaround has been removed now that the
-  fix lives in `build_clean.py` (see the layering rule under Architecture
-  notes).
-- **`party` vs `party_raw`, and `PARTY_MAP`** (added 2026-11-06):
+  Analysis code must not strip or re-case it (see the layering rule under
+  Architecture notes).
+- **`party` vs `party_raw`, and `PARTY_MAP`**:
   `party_raw = LOWER(TRIM(EdustajaRyhmaLyhenne))` is the code exactly as the
   API recorded it at the time of the vote. `party = COALESCE(canonical_code,
   party_raw)` via a `LEFT JOIN` to the `party_map` table, which
@@ -281,12 +299,8 @@ votes, latest vote 2026-10-23, as of 2026-11-06):
   Splits (a group breaking away from its party) and one-MP groups keep their
   own codes — never map them into a parent party. Analysis code uses
   `party`; `party_raw` is there for auditing or for anything that needs the
-  historical label. Verified after the change: row count unchanged
-  (4,331,180), duplicate pairs 0, `skl`/`uv`/`si`/`hh` absent from `party`
-  but present in `party_raw` (12,575 rows remapped), `kd` now starts
-  1996-06-12 (21 MPs) and `sin` 2017-06-14 (21 MPs). Because `uv`/`si` now
-  merge into `sin`, `term_matrix.py` outputs for 2015-19 (and any 1995-99 /
-  1999-03 `skl` MPs) change after a rebuild — re-run them.
+  historical label. Any change to `PARTY_MAP` changes `term_matrix.py`
+  outputs for the affected terms: rebuild, then re-run those terms.
 - **`terms` table**: `build_clean.py` also (re)builds a small `terms`
   reference table (`term`, `start_date`, `end_date`) hardcoded as the `TERMS`
   list in that script — one row per Finnish parliamentary term, covering
