@@ -30,7 +30,10 @@ fetch_votes.py  ->  build_clean.py  ->  term_matrix.py  ->  pairs_report.py
    trimmed/normalised values, numeric ballots. Renamed party codes are
    mapped to one canonical code in `party` (original kept in `party_raw`).
    Also builds the `terms` and `party_map` reference tables. **Re-run after
-   every sync.**
+   every sync.** It ends with enforced sanity checks and exits non-zero if
+   any raw ballot string is not one of `Jaa`/`Ei`/`Tyhjää`/`Poissa`, if
+   `ballots_clean` has duplicate (person, vote) pairs, or if any row falls
+   outside every term. Don't run the analysis after a failed build.
 3. `term_matrix.py` — for one parliamentary term, produces the MP x MP
    agreement matrix, an MP lookup (name, party, cluster), and the
    similarity-map PNG.

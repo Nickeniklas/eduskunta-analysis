@@ -13,7 +13,9 @@ data from the open data API and analyses voting behaviour:
    local SQLite DB (`votes.db`).
 2. `build_clean.py` — rebuilds `ballots_clean` in `votes.db`, a normalised
    one-row-per-(person, vote) table with numeric ballots and lowercased
-   party codes (see "Cleaned ballot table" below).
+   party codes (see "Cleaned ballot table" below). Ends with enforced sanity
+   checks: non-zero exit on unknown ballot strings, duplicate pairs, or rows
+   outside every term.
 3. `term_matrix.py` — the main analysis entry point. Reads `ballots_clean`
    (not the raw tables) for a single parliamentary term and produces:
    - `agreement_{term}.csv`: MP x MP pairwise voting-agreement matrix.
@@ -247,9 +249,22 @@ Facts about the source data that the cleaning step relies on:
   (`AanestysMitatoity = '0'`) votes are included. Indexed on `person_id` and
   `vote_id`. `BUILD_SQL` joins ballots to a `SELECT DISTINCT AanestysId,
   IstuntoPvm, KieliId, AanestysMitatoity` subquery rather than the raw vote
-  table, so a duplicated raw vote row can't fan out ballots; `build_clean.py`
-  prints the number of duplicate (person_id, vote_id) pairs after every
-  rebuild, and it must be 0.
+  table, so a duplicated raw vote row can't fan out ballots.
+- **Build sanity checks are enforced**: after every rebuild
+  `build_clean.check_build(conn)` prints its counts and exits non-zero (with
+  the offending values listed) if any of these is above 0: raw ballot rows
+  (Finnish, non-annulled) whose trimmed `EdustajaAanestys` is not one of
+  `Jaa`, `Ei`, `Tyhjää`, `Poissa` (the ballot `CASE` has no `ELSE`, so an
+  unknown string would otherwise silently become `NULL`, i.e. look like
+  absent); duplicate (person_id, vote_id) pairs in `ballots_clean`; rows
+  outside every term. The rebuild is **atomic**: `rebuild(conn)` runs the
+  drops, `build_tables`, the summary and `check_build` in one explicit
+  transaction (`isolation_level = None`, manual `BEGIN`) and commits only if
+  the checks pass; on failure it rolls back, so the previous `ballots_clean`
+  (and `party_map`, `terms`) is kept untouched and the script exits 1. Fix the
+  cause and rebuild. Both functions take a connection, so tests can call them
+  on an in-memory DB (`rebuild` needs a connection with no open transaction).
+  A new ballot string means extending `KNOWN_BALLOTS` and the `CASE` together.
 - **`ballots_clean.party` is trimmed at the source**: `build_clean.py`'s
   `BUILD_SQL` wraps `EdustajaRyhmaLyhenne` in `LOWER(TRIM(...))`, so
   `party` values are already clean (e.g. `'kok'`, not `'kok       '`).
