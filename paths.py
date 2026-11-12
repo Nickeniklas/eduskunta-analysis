@@ -5,8 +5,7 @@ paths.py
 Centralizes the output-location convention for the term-scoped analysis
 scripts (term_matrix.py, pairs_report.py): every artifact for a term lives
 under outputs/{term}/, keeping filenames unchanged so they stay
-self-identifying if moved or shared. Not used by analyse_votes.py, which
-is not term-scoped and still writes to the repo root.
+self-identifying if moved or shared.
 """
 
 import os

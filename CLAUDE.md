@@ -30,21 +30,19 @@ data from the open data API and analyses voting behaviour:
    voting allies (accepts a person_id or a partial, case-insensitive name);
    `--cluster N` lists a KMeans cluster's members by name.
 
-   `analyse_votes.py` is the older, superseded entry point — it reads the
-   raw API tables directly instead of `ballots_clean`, covers the whole
-   dataset instead of one term at a time, and additionally produces
-   `rebels.csv` / `surprises.csv` (party-line-breaking and closest-vote
-   reports that the term-scoped pipeline does not yet have equivalents
-   for). Kept for that reason; prefer `term_matrix.py` for anything
-   term-scoped.
+   Rebel/surprise detection (party-line-breaking MPs, closest votes) is not
+   built yet: it will be part of `longitudinal.py`, computed per vote from
+   `ballots_clean`. A tied party vote (equal yes and no among a party's
+   members) means "no party line" — the removed legacy script broke ties
+   alphabetically, which wrongly made `no` the line and every `yes` voter a
+   rebel.
 
 Data is CC BY 4.0 (credit: Eduskunta / Parliament of Finland).
 
 ## Status
 
 - **Pipeline**: `fetch_votes.py` → `build_clean.py` → `term_matrix.py` →
-  `pairs_report.py` is the current pipeline. `analyse_votes.py` is kept only
-  for `rebels.csv` / `surprises.csv`.
+  `pairs_report.py` is the current (and only) pipeline.
 - **Local `votes.db`** (last synced and rebuilt 2026-11-06, re-checked
   2026-11-09): `SaliDBAanestys` 43,595 rows, `SaliDBAanestysEdustaja`
   8,675,295 rows; `ballots_clean` 4,331,180 rows, 714 persons, 21,765 votes,
@@ -55,12 +53,6 @@ Data is CC BY 4.0 (credit: Eduskunta / Parliament of Finland).
 - **Outputs**: `term_matrix.py` has been run for all eight terms
   (`outputs/1995-99` … `outputs/2023-27`), after the `party_map` rebuild.
   No `pairs_report.py` outputs are on disk; run it per term as needed.
-- **`analyse_votes.py` against the current schema**: its default column
-  guesses do not match the real ballot columns — `party` and `choice` find
-  no candidate (real names `EdustajaRyhmaLyhenne`, `EdustajaAanestys`) and
-  `mp` resolves to `EdustajaId`, which is not a person key. Pass the
-  `--col-*` overrides shown under Commands (that invocation is untested). It also
-  reads both language rows (no `KieliId = '1'` filter).
 - **Next planned build**: `longitudinal.py` (cross-term comparison from the
   per-term CSVs), not started; plan and open decisions are in
   `docs/PROJECT_CONTEXT.md` under "Open items".
@@ -92,8 +84,7 @@ pip install -r requirements.txt
 # Discover available API tables (sanity check / debugging)
 python fetch_votes.py --list
 
-# Inspect a table's real column names + one sample row before relying on
-# the column-name guesses in analyse_votes.py
+# Inspect a table's real column names + one sample row
 python fetch_votes.py --peek SaliDBAanestysEdustaja
 python fetch_votes.py --peek SaliDBAanestys
 
@@ -123,37 +114,22 @@ python pairs_report.py --term 2019-23                  # cross-party + dissenter
 python pairs_report.py --term 2019-23 --top 30         # print more rows
 python pairs_report.py --term 2019-23 --mp "Valtonen"  # one MP's allies (name or person_id)
 python pairs_report.py --term 2019-23 --cluster 2      # members of KMeans cluster 2
-
-# Older, whole-dataset analysis (raw tables, superseded by term_matrix.py
-# except for rebels.csv / surprises.csv, which have no term_matrix.py equivalent yet)
-python analyse_votes.py
-python analyse_votes.py --db custom.db --min-votes 20
-
-# Override guessed column names (see "Schema tolerance" under Architecture
-# notes; flags: --col-vote-id --col-mp --col-mp-name --col-party
-# --col-choice --col-v-vote-id). With the current API schema the defaults
-# miss party and choice, so override them with the real column names:
-python analyse_votes.py --col-mp EdustajaHenkiloNumero --col-party EdustajaRyhmaLyhenne --col-choice EdustajaAanestys
 ```
 
 ### Dependencies
 
-Listed in `requirements.txt`: `pandas numpy scikit-learn matplotlib umap-learn`.
-`umap-learn` is optional — used for a nicer 2D projection if installed, falls
+Listed in `requirements.txt`, pinned to exact versions: `pandas numpy
+scikit-learn matplotlib umap-learn pytest` (the code is version-sensitive,
+see the `stack()` gotcha below). `umap-learn` is optional — used for a nicer 2D projection if installed, falls
 back to PCA otherwise. `fetch_votes.py` only uses the standard library.
 
 ## Architecture notes
 
 - **Schema tolerance**: `fetch_votes.py` stores every API column as TEXT
   verbatim (`_ensure_table`/`_flush`), so the cache schema always matches
-  whatever the API currently returns. `analyse_votes.py` does NOT hardcode
-  Finnish column names directly — it guesses via `BALLOT_DEFAULTS` /
-  `VOTE_DEFAULTS` (lists of candidate names tried in order via `pick()`), and
-  every guessable field has a corresponding `--col-*` CLI override. If the
-  Eduskunta API renames a column, update the candidate lists or pass the
-  override flag rather than rewriting the loader. An override that names a
-  column that doesn't exist is silently ignored and the candidate list is
-  tried instead.
+  whatever the API returned when the table was created. Downstream, only
+  `build_clean.py` names raw columns; if the Eduskunta API renames one, fix
+  it there.
 - **Sync is resumable**: `--sync` resumes from where it left off — it counts
   cached rows, computes the start page, and inserts against a unique index on
   each table's natural key (`KEY_COLS`) so re-fetching an incomplete page is
@@ -167,9 +143,7 @@ back to PCA otherwise. `fetch_votes.py` only uses the standard library.
   as an overlap (the unique index makes the duplicates no-ops).
   Only the live row count drives the resume page; `_sync_state.rows` is
   informational and can lag it.
-  Pass `--reset` to wipe and start clean. `--since` exists only on
-  `analyse_votes.py`, and only as a placeholder (not implemented as a real
-  filter); `fetch_votes.py` has no `--since`.
+  Pass `--reset` to wipe and start clean. `fetch_votes.py` has no `--since`.
 - **`--update` assumes the API appends at the tail**: new rows arrive at the
   end of each table rather than reordering existing pages; `--update`'s page
   arithmetic depends on this. Confirmed on real data (see the log).
@@ -184,22 +158,18 @@ back to PCA otherwise. `fetch_votes.py` only uses the standard library.
   hand — delete exact-duplicate rows keeping the lowest rowid (compare with
   `IS` so NULL matches NULL), drop `ux_{table}`, recreate it on the new key —
   or run `--sync --reset`.
-- **Ballot normalisation in `analyse_votes.py`**: raw Finnish vote choices
-  (`Jaa`/`Ei`/`Tyhjää`/`Poissa`) are normalised via `CHOICE_MAP` to
-  `yes`/`no`/`empty`/`absent`. Anything unrecognised defaults to `absent`.
-  Only `yes`/`no` are used for similarity encoding (`+1`/`-1`);
-  `empty`/`absent` encode as `0` so non-votes don't fake agreement.
-  `term_matrix.py` works differently, from `ballots_clean.ballot`: absent is
-  `NULL` (excluded from shared votes), while abstain (`0`) is a cast ballot
-  and two abstentions count as agreement.
-- **"Party line" definition**: for `rebels.csv`, the party line on a vote is
-  the *mode* (majority choice) of that party's `yes`/`no` votes on that vote —
-  not the government/opposition whip position.
+- **Ballot encoding in `term_matrix.py`**: from `ballots_clean.ballot`,
+  absent is `NULL` (excluded from shared votes), while abstain (`0`) is a
+  cast ballot and two abstentions count as agreement.
+- **"Party line" definition** (for the planned rebel detection): the party
+  line on a vote is the majority choice of that party's `yes`/`no` votes on
+  that vote — not the government/opposition whip position. A tie means no
+  party line (nobody is a rebel on that vote).
 - **API politeness**: `fetch_votes.py` enforces `PER_PAGE = 100` (API hard
   cap) and sleeps `SLEEP = 0.3s` between pages, with exponential backoff on
   HTTP 429. Don't remove these when editing the fetch loop.
 - **Pipeline order**: `fetch_votes.py` → `build_clean.py` → `term_matrix.py`
-  → `pairs_report.py` (or `analyse_votes.py` instead of the last two).
+  → `pairs_report.py`.
   `build_clean.py` must be re-run after every `fetch_votes.py --sync` that
   pulls new rows, since it rebuilds `ballots_clean` from scratch
   (`DROP TABLE IF EXISTS` + full `CREATE TABLE ... AS SELECT`);
@@ -237,9 +207,7 @@ back to PCA otherwise. `fetch_votes.py` only uses the standard library.
   `dissenters_{term}.csv`) under `outputs/{term}/`, via the `output_path()` /
   `output_dir()` helpers in `paths.py`. That's the one place the convention
   lives — to change where outputs go, edit `paths.py`, not the scripts that
-  call it. `analyse_votes.py` is the exception: it's not term-scoped, doesn't
-  import `paths.py`, and still writes `mp_map.png` / `clusters.csv` /
-  `rebels.csv` / `surprises.csv` to the repo root.
+  call it.
 
 ## Cleaned ballot table (`ballots_clean`)
 
@@ -268,8 +236,7 @@ Facts about the source data that the cleaning step relies on:
   `21:00:00` (EEST, summer) on the *previous* day. Taking `date()` of the raw
   value therefore puts ~7,800 votes one day early. `build_clean.py` stores
   `vote_date = date(IstuntoPvm, '+3 hours')`, a plain local `YYYY-MM-DD`
-  with no time part. Raw-table queries (including `analyse_votes.py`) still
-  see the unshifted timestamps.
+  with no time part. Raw-table queries still see the unshifted timestamps.
 - **Finnish `Tyhjää` = Swedish `Avstår` + `Blank` combined**: Swedish
   distinguishes two abstention types where Finnish only has one, which is
   part of why cleaning/analysis works from the Finnish-language rows only.

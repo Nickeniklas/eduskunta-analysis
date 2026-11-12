@@ -11,9 +11,3 @@ votes.db-wal
 # generated analysis outputs
 outputs/*
 !outputs/.gitkeep
-
-# legacy whole-dataset outputs (analyse_votes.py, still writes to root)
-mp_map.png
-clusters.csv
-rebels.csv
-surprises.csv

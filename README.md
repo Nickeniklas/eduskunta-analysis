@@ -38,9 +38,6 @@ fetch_votes.py  ->  build_clean.py  ->  term_matrix.py  ->  pairs_report.py
    cross-party pairs, within-party dissenters, per-MP ally lists, and
    cluster membership lists.
 
-`analyse_votes.py` is the older whole-dataset entry point, superseded by
-`term_matrix.py` except for its `rebels.csv` / `surprises.csv` reports.
-
 ## Tech stack
 
 - **Python 3** (standard library only for fetching)

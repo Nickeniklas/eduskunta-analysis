@@ -1,7 +1,10 @@
-pandas
-numpy
-scikit-learn
-matplotlib
+pandas==3.0.3
+numpy==2.4.6
+scikit-learn==1.9.0
+matplotlib==3.11.0
 
 # Optional: nicer 2D projection for the similarity map (falls back to PCA if absent)
-umap-learn
+umap-learn==0.5.12
+
+# Tests
+pytest==9.2.0

@@ -4,8 +4,7 @@ term_matrix.py
 
 Reads ballots_clean (built by build_clean.py) for a single parliamentary
 term and produces an MP x MP pairwise agreement matrix, plus a similarity
-map. Replaces analyse_votes.py as the main analysis entry point: it reads
-the cleaned table instead of the raw API tables.
+map. It reads the cleaned table, never the raw API tables.
 
 Outputs (in outputs/{term}/, see paths.py):
   agreement_{term}.csv   MP x MP agreement matrix (person_id index/columns)
